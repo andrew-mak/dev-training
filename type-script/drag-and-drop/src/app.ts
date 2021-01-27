@@ -2,6 +2,21 @@ enum ProjectStatus { Active, Finished }
 
 type Listener<T> = (items: T[]) => void;
 
+//Drag and Drop
+
+interface Draggable {
+  dragStartHandler(event: DragEvent): void;
+  dragEndHandler(event: DragEvent): void;
+}
+interface DragTarget {
+  //signal the browser and JS that the thing you're dragging something over is a valid drag target
+  dragOverHandler(event: DragEvent): void;
+  //to react to the actual drop that happens
+  dropHandler(event: DragEvent): void;
+  //can update our data, UI, give some visual feedback or to revert our visual update
+  dragLeaveHandler(event: DragEvent): void;
+}
+
 class State<T> {
   protected listeners: Listener<T>[] = [];
 
@@ -36,6 +51,20 @@ class ProjectState extends State<Project>{
       ProjectStatus.Active
     );
     this.projects.push(newProject);
+    this.updateListeners();
+  }
+
+  changeProjectStatus(projectId: string, newStatus: ProjectStatus) {
+    const targetProject = this.projects.find(project => {
+      return project.id === projectId
+    });
+    if (targetProject && targetProject.status !== newStatus) {
+      targetProject.status = newStatus;
+      this.updateListeners();
+    }
+  }
+
+  private updateListeners() {
     for (const listenerFn of this.listeners) {
       listenerFn(this.projects.slice());
     }
@@ -87,7 +116,7 @@ abstract class Component<T extends HTMLElement, U extends HTMLElement> {
   abstract renderContent(): void;
 }
 
-class ProjectItem extends Component<HTMLUListElement, HTMLLIElement>{
+class ProjectItem extends Component<HTMLUListElement, HTMLLIElement> implements Draggable {
   private project: Project;
 
   get team(): string {
@@ -100,10 +129,25 @@ class ProjectItem extends Component<HTMLUListElement, HTMLLIElement>{
     super('single-project', hostElementId, 'beforeend', project.id);
     this.project = project;
 
+    this.configure();
     this.renderContent();
   }
 
-  configure() { }
+  @autobind
+  dragStartHandler(event: DragEvent) {
+    event.dataTransfer!.setData('text/plain', this.project.id);
+    event.dataTransfer!.effectAllowed = 'move';
+  }
+
+  dragEndHandler(_: DragEvent) {
+
+  }
+
+  configure() {
+    this.element.addEventListener('dragstart', this.dragStartHandler)
+    this.element.addEventListener('dragend', this.dragEndHandler)
+  }
+
   renderContent() {
     const titleEl = this.element.querySelector('h2') as HTMLHeadingElement;
     const teamEl = this.element.querySelector('h3') as HTMLHeadingElement;
@@ -115,7 +159,7 @@ class ProjectItem extends Component<HTMLUListElement, HTMLLIElement>{
   }
 }
 
-class ProjectList extends Component<HTMLDivElement, HTMLElement>{
+class ProjectList extends Component<HTMLDivElement, HTMLElement> implements DragTarget {
   assignedProjects: Project[];
 
   constructor(private type: 'active' | 'finished') {
@@ -124,6 +168,28 @@ class ProjectList extends Component<HTMLDivElement, HTMLElement>{
 
     this.configure();
     this.renderContent();
+  }
+
+  @autobind
+  dragOverHandler(event: DragEvent) {
+    if (event.dataTransfer && event.dataTransfer.types[0] === 'text/plain') {
+      event.preventDefault();
+      const listEl = this.element.querySelector('ul')!;
+      listEl.classList.add('droppable');
+    }
+  }
+  @autobind
+  dropHandler(event: DragEvent) {
+    const droppedProjectId = event.dataTransfer!.getData('text/plain');
+    projectState.changeProjectStatus(
+      droppedProjectId,
+      this.type === 'active' ? ProjectStatus.Active : ProjectStatus.Finished
+    );
+  }
+  @autobind
+  dragLeaveHandler(event: DragEvent) {
+    const listEl = this.element.querySelector('ul')!;
+    listEl.classList.remove('droppable');
   }
 
   configure() {
@@ -135,6 +201,10 @@ class ProjectList extends Component<HTMLDivElement, HTMLElement>{
       this.assignedProjects = relevantProjects;
       this.renderProjects();
     });
+
+    this.element.addEventListener('dragover', this.dragOverHandler)
+    this.element.addEventListener('drop', this.dropHandler)
+    this.element.addEventListener('dragleave', this.dragLeaveHandler)
   }
 
   private renderProjects() {
